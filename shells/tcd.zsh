@@ -18,13 +18,89 @@ function _tcd_back() {
     return 1
 }
 
+# Private quoting helper; REPLY is local to the caller. No external encoder.
+function _tcd_json_quote() {
+    emulate -L zsh
+    local value=$1 escaped='' ch code i
+    for (( i=1; i<=${#value}; ++i )); do
+        ch=${value[i]}
+        case $ch in
+            '"') escaped+='\"' ;;
+            '\') escaped+='\\' ;;
+            *)
+                builtin printf -v code '%d' "'$ch"
+                if (( code < 32 )); then builtin printf -v ch '\\u%04x' "$code"; fi
+                escaped+=$ch ;;
+        esac
+    done
+    REPLY="\"$escaped\""
+}
+
+# Read-only JSON API. Safe in precmd, chpwd and prompt substitutions.
+function tcd-status() {
+    emulate -L zsh
+    local active=false destination=null depth=0 REPLY
+    if (( ${#_tcd_origins} )) && [[ $PWD == "${_tcd_targets[-1]}" ]]; then
+        active=true depth=${#_tcd_origins}
+        _tcd_json_quote "${_tcd_origins[-1]}"
+        destination=$REPLY
+    fi
+    print -r -- "{\"schema_version\":1,\"version\":\"0.2.1\",\"shell\":\"zsh\",\"active\":$active,\"return_to\":$destination,\"depth\":$depth}"
+}
+
+function tcd-prompt() {
+    emulate -L zsh
+    local destination ch clean='' i
+    if (( ${#_tcd_origins} )) && [[ $PWD == "${_tcd_targets[-1]}" ]]; then
+        destination=${_tcd_origins[-1]}
+        for (( i=1; i<=${#destination}; ++i )); do
+            ch=${destination[i]}
+            if [[ $ch == [[:cntrl:]] ]]; then clean+='?'
+            elif [[ $ch == '%' ]]; then clean+='%%'
+            else clean+=$ch
+            fi
+        done
+        print -rn -- "[return: $clean] "
+    fi
+}
+
+function _tcd_doctor() {
+    emulate -L zsh
+    local pre=0 prompt=0 fn issues=0
+    for fn in $preexec_functions; do [[ $fn == _tcd_preexec ]] && (( ++pre )); done
+    for fn in $precmd_functions; do [[ $fn == _tcd_precmd ]] && (( ++prompt )); done
+    if [[ $_tcd_version != 0.2.1 || $_tcd_owner != $$ ]]; then
+        print -u2 -r -- 'FAIL: integration version/session mismatch'; (( ++issues ))
+    fi
+    if (( pre != 1 || prompt != 1 )); then
+        print -u2 -r -- 'FAIL: preexec/precmd callback missing or duplicated'; (( ++issues ))
+    fi
+    if (( ! ${+functions[_tcd_preexec]} || ! ${+functions[_tcd_precmd]} )); then
+        print -u2 -r -- 'FAIL: callback function missing'; (( ++issues ))
+    fi
+    if (( issues )); then
+        print -u2 -r -- 'tcd doctor: reload integration after hook setup; restart your shell for version changes'
+        return 1
+    fi
+    print -r -- 'OK: TempCD 0.2.1 (zsh); callbacks registered once for this session'
+    print -r -- 'Other hooks may still change directories or abort the callback cycle.'
+}
+
 function tcd() {
     emulate -L zsh
+    local json=0
+    if [[ $# == 2 && ( ( $1 == --status && $2 == --json ) || ( $1 == --json && $2 == --status ) ) ]]; then
+        json=1
+        set -- --status
+    fi
     if [[ $# == 1 && $1 == --cancel ]]; then
         _tcd_origins=() _tcd_targets=() _tcd_running=()
         return 0
     fi
-    if [[ $# == 1 && $1 == --status ]]; then
+    if [[ $# == 1 && ( $1 == --status || $1 == --doctor ) ]]; then
+        if (( ${#_tcd_running} )); then _tcd_running[-1]=0; fi
+        if [[ $1 == --doctor ]]; then _tcd_doctor; return $?; fi
+        if (( json )); then tcd-status; return 0; fi
         if (( ${#_tcd_origins} )); then
             _tcd_running[-1]=0
             print -r -- "tcd: return to ${_tcd_origins[-1]} | depth: ${#_tcd_origins}"
@@ -34,7 +110,7 @@ function tcd() {
         return 0
     fi
     if [[ $# != 1 || ( $1 == --* && $1 != --back ) ]]; then
-        print -u2 -r -- 'tcd: expected one directory or --status, --back, --cancel'
+        print -u2 -r -- 'tcd: expected one directory or --status [--json], --back, --cancel, --doctor'
         return 2
     fi
     if (( ! _tcd_in_line )); then
@@ -81,7 +157,7 @@ function _tcd_precmd() {
 }
 
 if (( ! ${+_tcd_installed} )); then
-    typeset -g _tcd_installed=1 _tcd_in_line=0
+    typeset -g _tcd_installed=1 _tcd_in_line=0 _tcd_version=0.2.1 _tcd_owner=$$
     typeset -ga _tcd_origins=() _tcd_targets=() _tcd_running=()
     autoload -Uz add-zsh-hook
     add-zsh-hook preexec _tcd_preexec

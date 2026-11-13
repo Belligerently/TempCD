@@ -19,30 +19,74 @@ def --env __tcd_back [] {
     }
 }
 
+# Read-only native record. Safe in prompt/environment hooks.
+def tcd-status [] {
+    let stack = ($env.__TCD_STACK? | default [])
+    let active = (($stack | is-not-empty) and ($env.PWD == ($stack | last).target))
+    {schema_version: 1, version: '0.2.1', shell: 'nu', active: $active,
+        return_to: (if $active { ($stack | last).origin } else { null }),
+        depth: (if $active { $stack | length } else { 0 })}
+}
+
+# Plain text only: directory names cannot inject terminal escape sequences.
+def tcd-prompt [] {
+    let state = (tcd-status)
+    if $state.active {
+        let path = ($state.return_to | str replace --all --regex '[\x00-\x1f\x7f]' '?')
+        $"[return: ($path)] "
+    } else { '' }
+}
+
+def --env __tcd_hold [] {
+    if not ($env.__TCD_STACK | is-empty) {
+        let last = (($env.__TCD_STACK | length) - 1)
+        $env.__TCD_STACK = ($env.__TCD_STACK | update $last {|frame| $frame | upsert running false})
+    }
+}
+
+def __tcd_doctor [] {
+    let pre = ($env.config.hooks.pre_execution | where {|hook| ($hook | describe) == 'string'})
+    let prompt = ($env.config.hooks.pre_prompt | where {|hook| ($hook | describe) == 'string'})
+    let issues = ([
+        (if $env.__TCD_OWNER? != $nu.pid { 'integration belongs to another session' })
+        (if $env.__TCD_VERSION? != '0.2.1' { 'integration version mismatch' })
+        (if ($pre | where {|hook| $hook == '__tcd_pre_execution'} | length) != 1 { 'pre_execution callback missing or duplicated' })
+        (if ($prompt | where {|hook| $hook == '__tcd_prompt_guard'} | length) != 1 { 'prompt guard missing or duplicated' })
+        (if ($prompt | where {|hook| $hook == '__tcd_pre_prompt'} | length) != 1 { 'pre_prompt callback missing or duplicated' })
+        (if (which __tcd_pre_execution | is-empty) or (which __tcd_pre_prompt | is-empty) { 'callback function missing' })
+    ] | compact)
+    if ($issues | is-not-empty) {
+        for issue in $issues { print -e $"FAIL: ($issue)" }
+        error make {msg: 'tcd doctor: reload integration after hook setup; restart your shell for version changes'}
+    }
+    print 'OK: TempCD 0.2.1 (nu); callbacks registered once for this session'
+    print 'Other hooks may still change directories or abort the callback cycle.'
+}
+
 def --env tcd [
     directory?: path  # Destination for the next entered command line
     --cancel         # Disarm every pending return, staying where you are
     --status         # Show the next return and depth without spending the visit
     --back           # Return immediately, unwinding one visit
+    --doctor         # Diagnose registration without spending the visit
+    --json           # Emit versioned JSON with --status
 ] {
-    let controls = ([$cancel $status $back] | where {|flag| $flag} | length)
-    if ($controls > 1) or (($controls > 0) and ($directory != null)) {
-        error make {msg: "tcd: use one directory or one of --status, --back, --cancel"}
+    let controls = ([$cancel $status $back $doctor] | where {|flag| $flag} | length)
+    if ($json and not $status) or ($controls > 1) or (($controls > 0) and ($directory != null)) {
+        error make {msg: "tcd: use one directory or one of --status [--json], --back, --cancel, --doctor"}
     }
     if $cancel {
         $env.__TCD_STACK = []
         return
     }
-    if $status {
-        let depth = ($env.__TCD_STACK | length)
-        if $depth == 0 {
-            print "tcd: no pending return"
-        } else {
-            let frame = ($env.__TCD_STACK | last)
-            let last = $depth - 1
-            $env.__TCD_STACK = ($env.__TCD_STACK | update $last {|frame| $frame | upsert running false})
-            print $"tcd: return to ($frame.origin) | depth: ($depth)"
-        }
+    if $status or $doctor {
+        __tcd_hold
+        if $doctor { __tcd_doctor; return }
+        let state = (tcd-status)
+        if $json { return ($state | to json --raw) }
+        if $state.active {
+            print $"tcd: return to ($state.return_to) | depth: ($state.depth)"
+        } else { print 'tcd: no pending return' }
         return
     }
     if $back {
@@ -53,7 +97,7 @@ def --env tcd [
         return
     }
     if $directory == null {
-        error make {msg: "tcd: expected a directory or --status, --back, --cancel"}
+        error make {msg: "tcd: expected a directory or --status [--json], --back, --cancel, --doctor"}
     }
     if ($env.__TCD_IN_LINE? | default false) != true {
         error make {msg: "tcd: interactive command only; use cd in scripts and startup files"}
@@ -65,44 +109,51 @@ def --env tcd [
     $env.__TCD_STACK = (($env.__TCD_STACK? | default []) | append $frame)
 }
 
-# Re-sourcing defines the function again but neither duplicates hooks nor resets
-# an outstanding visit. Put this guard in environment, not a captured constant.
+def --env __tcd_prompt_guard [] { $env.__TCD_IN_LINE = false }
+
+def --env __tcd_pre_execution [] {
+    if (commandline | lines | all {|line|
+        let content = ($line | str trim)
+        ($content | is-empty) or ($content | str starts-with '#')
+    }) { return }
+    $env.__TCD_IN_LINE = true
+    if not ($env.__TCD_STACK | is-empty) {
+        if $env.PWD != ($env.__TCD_STACK | last).target {
+            $env.__TCD_STACK = []
+            return
+        }
+        let last = (($env.__TCD_STACK | length) - 1)
+        $env.__TCD_STACK = ($env.__TCD_STACK | update $last {|frame| $frame | upsert running true})
+    }
+}
+
+def --env __tcd_pre_prompt [] {
+    let exit_code = $env.LAST_EXIT_CODE?
+    $env.__TCD_IN_LINE = false
+    if not ($env.__TCD_STACK | is-empty) {
+        let frame = ($env.__TCD_STACK | last)
+        if $env.PWD != $frame.target {
+            # Respect an explicit cd or a directory-changing prompt hook.
+            $env.__TCD_STACK = []
+        } else if $frame.running {
+            try {
+                __tcd_back
+            } catch {|err|
+                print -e $err.msg
+            }
+        }
+    }
+    if $exit_code != null { $env.LAST_EXIT_CODE = $exit_code }
+}
+
+# Re-sourcing retains pending state and avoids duplicate registrations.
+# A version mismatch is diagnosed; opening a new shell safely installs upgrades.
 if $env.__TCD_OWNER? != $nu.pid {
     $env.__TCD_OWNER = $nu.pid
+    $env.__TCD_VERSION = '0.2.1'
     $env.__TCD_IN_LINE = false
     $env.__TCD_STACK = []
-    # Clear the input context before existing prompt hooks run as well.
-    $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt | prepend {||
-        $env.__TCD_IN_LINE = false
-    })
-    $env.config.hooks.pre_execution = ($env.config.hooks.pre_execution | append {||
-        if (commandline | str trim | is-empty) { return }
-        $env.__TCD_IN_LINE = true
-        if not ($env.__TCD_STACK | is-empty) {
-            if $env.PWD != ($env.__TCD_STACK | last).target {
-                $env.__TCD_STACK = []
-                return
-            }
-            let last = (($env.__TCD_STACK | length) - 1)
-            $env.__TCD_STACK = ($env.__TCD_STACK | update $last {|frame| $frame | upsert running true})
-        }
-    })
-    $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt | append {||
-        let exit_code = $env.LAST_EXIT_CODE?
-        $env.__TCD_IN_LINE = false
-        if not ($env.__TCD_STACK | is-empty) {
-            let frame = ($env.__TCD_STACK | last)
-            if $env.PWD != $frame.target {
-                # Respect an explicit cd or a directory-changing prompt hook.
-                $env.__TCD_STACK = []
-            } else if $frame.running {
-                try {
-                    __tcd_back
-                } catch {|err|
-                    print -e $err.msg
-                }
-            }
-        }
-        if $exit_code != null { $env.LAST_EXIT_CODE = $exit_code }
-    })
+    $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt | prepend '__tcd_prompt_guard')
+    $env.config.hooks.pre_execution = ($env.config.hooks.pre_execution | append '__tcd_pre_execution')
+    $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt | append '__tcd_pre_prompt')
 }

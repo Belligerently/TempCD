@@ -1,6 +1,6 @@
 [package]
 name = "tcd"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.74"
 description = "Visit a directory for one interactive command, then come back"
@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/Belligerently/TempCD"
 keywords = ["shell", "nushell", "directory", "cli"]
 categories = ["command-line-utilities"]
-include = ["src/**", "shells/**", "tests/**", "README.md", "LICENSE", "Cargo.toml", "Cargo.lock"]
+include = ["src/**", "shells/**", "scripts/**", "README.md", "INTEGRATION.md", "VALIDATION.md", "REVIEW.md", "LICENSE", "Cargo.toml", "Cargo.lock"]
 
 [dependencies]
 

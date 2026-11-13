@@ -13,6 +13,13 @@ jobs:
       - run: cargo install nu --version 0.116.1 --locked
       - run: cargo fmt --check
       - run: cargo clippy --offline --all-targets -- -D warnings
-      - run: cargo test --offline
+      - run: python3 scripts/test.py
         env:
           TCD_REQUIRE_SHELLS: '1'
+      - run: cargo build --release --locked
+      - run: cargo build --locked
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-logs
+          path: target/test-logs/

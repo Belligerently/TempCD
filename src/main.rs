@@ -9,7 +9,7 @@ Load shell integration first (see README), then use:\n\
   tcd ~/projects/copse\n\
   cargo test\n\n\
 The shell returns before the next prompt. Normal cd is unchanged.\n\
-Shell controls: tcd --status | tcd --back | tcd --cancel\n\
+Shell controls: tcd --status [--json] | tcd --doctor | tcd --back | tcd --cancel\n\
 The executable cannot change its parent shell's directory.\n";
 
 fn output(args: &[String]) -> Result<&'static str, &'static str> {
@@ -27,7 +27,14 @@ fn output(args: &[String]) -> Result<&'static str, &'static str> {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<_> = std::env::args().skip(1).collect();
+    let args: Result<Vec<_>, _> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.into_string())
+        .collect();
+    let Ok(args) = args else {
+        eprintln!("tcd: arguments must be valid UTF-8");
+        return ExitCode::from(2);
+    };
     match output(&args) {
         Ok(body) => match io::stdout().lock().write_all(body.as_bytes()) {
             Ok(()) => ExitCode::SUCCESS,
@@ -42,36 +49,5 @@ fn main() -> ExitCode {
             eprintln!("tcd: {message}");
             ExitCode::from(2)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn run(args: &[&str]) -> Result<&'static str, &'static str> {
-        output(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-    }
-    #[test]
-    fn static_integrations() {
-        assert_eq!(run(&["init", "nu"]), run(&["init", "nushell"]));
-        assert!(run(&["init", "nu"]).unwrap().contains("def --env tcd"));
-        assert!(run(&["init", "zsh"]).unwrap().contains("preexec"));
-    }
-    #[test]
-    fn rejects_unsupported_shells_and_direct_cd() {
-        for args in [
-            vec!["init", "bash"],
-            vec!["init", "fish"],
-            vec!["init", "pwsh"],
-            vec!["/tmp"],
-            vec!["init"],
-        ] {
-            assert!(run(&args).is_err());
-        }
-    }
-    #[test]
-    fn help_and_version() {
-        assert_eq!(run(&[]), run(&["--help"]));
-        assert_eq!(run(&["--version"]).unwrap(), "tcd 0.2.0\n");
     }
 }

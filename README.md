@@ -17,6 +17,22 @@ MIT licensed. Rust executable, no third-party dependencies, no daemon, and no
 per-command subprocess overhead. The Rust package has not been published to
 crates.io.
 
+## Runtime and reliability
+
+**Python is not required to install or use TempCD.** The Rust executable
+generates self-contained Nushell or Zsh integration. That shell code performs
+the directory changes and automatic return; it does not launch Python or Rust
+for each command. Python is used only by the development tests to drive real
+interactive terminals, using its standard library.
+
+This is an **early v0.1 release**: 3 Rust unit tests and 41 interactive cases
+passed locally on macOS, and the [Linux CI run passed](https://github.com/Belligerently/TempCD/actions/runs/43352689754).
+Those checks cover the core workflow and edge cases, but do not establish
+compatibility with every shell configuration. Prompt and environment hooks are
+the main integration boundary: replacing hook lists can disable TempCD, and a
+hook that aborts the execution cycle can prevent a return. See the support and
+boundaries below for tested versions and limitations.
+
 ## Install from this source
 
 Download or clone [TempCD](https://github.com/Belligerently/TempCD).
@@ -99,9 +115,9 @@ does not duplicate hooks or discard pending visits.
 | Fish | Not implemented or tested; Fish was unavailable in the build environment. |
 | PowerShell | Not implemented or tested; PowerShell/PSReadLine was unavailable. |
 
-No Windows or Linux runtime verification has been performed yet. CI is supplied
-for future Linux verification. No cross-shell compatibility beyond the tested
-versions above is claimed.
+The interactive suite also passed on the GitHub-hosted Ubuntu runner with
+Nushell 0.116.1 and the runner's installed Zsh. Windows has not been verified.
+Compatibility with other shell versions and custom hook setups is not guaranteed.
 
 These are interactive integrations. Nu's hooks do not run in `nu -c` or scripts;
 use ordinary `cd` or a scoped/subshell command in scripts. Do not call `tcd`

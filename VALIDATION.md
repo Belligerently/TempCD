@@ -13,6 +13,7 @@ Nushell 0.116.1 and Zsh 5.9.
   documented in the README. Both shells run an ordinary `cargo test` in a
   fixture project and return to the original cwd before the following prompt.
 
-The supplied Linux CI workflow has not been run here. Bash, Fish, PowerShell,
-Windows, Linux, and other shell versions are not claimed as verified.
+The [Linux CI run](https://github.com/Belligerently/TempCD/actions/runs/43352689754)
+also passed on GitHub's Ubuntu runner, with both shells required. Bash, Fish,
+PowerShell, Windows, and other shell versions are not claimed as verified.
 No personal shell configuration was changed during validation.

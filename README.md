@@ -25,8 +25,9 @@ the directory changes and automatic return; it does not launch Python or Rust
 for each command. Python is used only by the development tests to drive real
 interactive terminals, using its standard library.
 
-This is an **early v0.1 release**: 3 Rust unit tests and 41 interactive cases
-passed locally on macOS, and the [Linux CI run passed](https://github.com/Belligerently/TempCD/actions/runs/43352689754).
+This is an **early v0.2 release**: 3 Rust unit tests and 57 interactive cases
+passed locally on macOS. The previous version also passed [Linux CI](https://github.com/Belligerently/TempCD/actions/runs/43352689754).
+See [validation](VALIDATION.md) for the current results.
 Those checks cover the core workflow and edge cases, but do not establish
 compatibility with every shell configuration. Prompt and environment hooks are
 the main integration boundary: replacing hook lists can disable TempCD, and a
@@ -96,6 +97,15 @@ does not duplicate hooks or discard pending visits.
   `tcd A` → `tcd B` → command in B → back to A → command in A → back to origin.
   A failed nested `tcd` consumes the outer visit and returns to its origin.
 - `tcd --cancel` disarms **all** pending returns and stays where you are.
+- `tcd --status` shows the next return directory and nesting depth. It leaves
+  you in place and does **not** consume the visit, so the next ordinary command
+  still runs in the destination. With no visit, it reports `no pending return`.
+- `tcd --back` returns immediately, unwinding **one** visit. If an outer visit
+  remains, the next ordinary command consumes that visit. With no visit, it
+  reports an error. A failed return clears the entire pending stack.
+- Use each control on its own submitted line, without a directory or another
+  control flag. For example, `tcd --status; command` keeps the visit pending
+  for that whole line; status inspection is not a command-counting mechanism.
 - If a command or hook changes cwd away from the current destination, the
   pending stack is canceled. An explicit `cd` therefore wins. Hooks that run
   after restoration can also choose a new cwd. A change away and back to the
@@ -134,6 +144,14 @@ run and Nu's previous-directory history / Zsh's `OLDPWD` can change.
 
 To uninstall, remove the configuration line, open a new shell, delete the
 generated integration file if used, then run `cargo uninstall tcd`.
+
+### Upgrade to v0.2
+
+Reinstall from the updated source with `cargo install --path . --locked --force`.
+In Nu, regenerate the integration with the `^tcd init nu | save --force ...`
+command above, then open a new shell. Zsh's configuration loads the updated
+integration when you open a new shell. Restarting also avoids mixing old
+registered callbacks with newly sourced functions.
 
 ## Develop and verify
 

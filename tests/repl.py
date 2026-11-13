@@ -219,6 +219,87 @@ class InteractiveCases:
         r.run("echo stay")
         self.assertEqual(r.cwd, str(self.a))
 
+    def test_status_without_visit(self):
+        r = self.start()
+        self.assertIn("tcd: no pending return", r.run("tcd --status"))
+        self.assertEqual(r.cwd, str(self.root))
+        self.assertEqual(r.status, 0)
+
+    def test_status_does_not_consume_visit(self):
+        r = self.start()
+        self.visit()
+        for _ in range(2):
+            output = r.run("tcd --status")
+            self.assertIn("tcd: return to " + str(self.root) + " | depth: 1", output)
+            self.assertEqual(r.cwd, str(self.a))
+        r.run("pwd | save -f after-status.txt" if self.shell == "nu" else "pwd > after-status.txt")
+        self.assertEqual((self.a / "after-status.txt").read_text().strip(), str(self.a))
+        self.assertEqual(r.cwd, str(self.root))
+
+    def test_status_reports_nested_return(self):
+        r = self.start()
+        self.visit()
+        self.visit(self.b)
+        self.assertIn("tcd: return to " + str(self.a) + " | depth: 2", r.run("tcd --status"))
+        self.assertEqual(r.cwd, str(self.b))
+        r.run("echo inner")
+        self.assertEqual(r.cwd, str(self.a))
+        self.assertIn("tcd: return to " + str(self.root) + " | depth: 1", r.run("tcd --status"))
+        self.assertEqual(r.cwd, str(self.a))
+        r.run("echo outer")
+        self.assertEqual(r.cwd, str(self.root))
+
+    def test_back_returns_immediately(self):
+        r = self.start()
+        self.visit()
+        r.run("tcd --back")
+        self.assertEqual(r.cwd, str(self.root))
+        self.assertEqual(r.status, 0)
+        self.assertIn("tcd: no pending return", r.run("tcd --status"))
+
+    def test_back_unwinds_only_one_visit(self):
+        r = self.start()
+        self.visit()
+        self.visit(self.b)
+        r.run("tcd --back")
+        self.assertEqual(r.cwd, str(self.a))
+        self.assertIn("depth: 1", r.run("tcd --status"))
+        self.assertEqual(r.cwd, str(self.a))
+        r.run("echo remaining-visit")
+        self.assertEqual(r.cwd, str(self.root))
+
+    def test_back_without_visit(self):
+        r = self.start()
+        self.assertIn("tcd: no pending return", r.run("tcd --back"))
+        self.assertNotEqual(r.status, 0)
+        self.assertEqual(r.cwd, str(self.root))
+
+    def test_back_missing_origin_clears_stack(self):
+        origin = self.root / "disappearing"
+        origin.mkdir()
+        r = self.start()
+        r.run("cd " + quote(origin))
+        self.visit()
+        destination = self.root / "outside-project"
+        destination.mkdir()
+        self.visit(destination)
+        shutil.rmtree(self.a)
+        output = r.run("tcd --back")
+        self.assertIn("could not return", output)
+        self.assertNotEqual(r.status, 0)
+        self.assertIn("tcd: no pending return", r.run("tcd --status"))
+        self.a.mkdir()
+        r.run("echo no-retry")
+        self.assertEqual(r.cwd, str(destination))
+
+    def test_control_arguments_are_exclusive(self):
+        r = self.start()
+        for command in ["tcd --status --back", "tcd --cancel --status", "tcd --back " + quote(self.a), "tcd --status " + quote(self.a)]:
+            output = r.run(command)
+            self.assertIn("tcd:", output)
+            self.assertNotEqual(r.status, 0)
+            self.assertEqual(r.cwd, str(self.root))
+
     def test_source_twice(self):
         r = self.start()
         init = self.root / ("again.nu" if self.shell == "nu" else "again.zsh")

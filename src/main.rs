@@ -9,6 +9,7 @@ Load shell integration first (see README), then use:\n\
   tcd ~/projects/copse\n\
   cargo test\n\n\
 The shell returns before the next prompt. Normal cd is unchanged.\n\
+Shell controls: tcd --status | tcd --back | tcd --cancel\n\
 The executable cannot change its parent shell's directory.\n";
 
 fn output(args: &[String]) -> Result<&'static str, &'static str> {
@@ -71,6 +72,6 @@ mod tests {
     #[test]
     fn help_and_version() {
         assert_eq!(run(&[]), run(&["--help"]));
-        assert_eq!(run(&["--version"]).unwrap(), "tcd 0.1.0\n");
+        assert_eq!(run(&["--version"]).unwrap(), "tcd 0.2.0\n");
     }
 }
